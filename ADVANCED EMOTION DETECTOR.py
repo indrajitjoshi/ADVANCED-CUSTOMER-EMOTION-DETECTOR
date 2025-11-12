@@ -1,101 +1,104 @@
+# Affectlytics: Product Sentiment Analysis with Advanced Negation Handling
 import streamlit as st
 import numpy as np
 import pandas as pd
-import re
 from datasets import load_dataset
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
-from sklearn.utils.class_weight import compute_class_weight 
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU
-from tensorflow.keras.callbacks import EarlyStopping 
+from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, GRU, Dense, Dropout, Conv1D, GlobalMaxPooling1D
+from tensorflow.keras.callbacks import EarlyStopping
 import os
-from collections import Counter 
+from collections import Counter
+from sklearn.utils.class_weight import compute_class_weight
 
 # Suppress TensorFlow logging messages and warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
 # --- Configuration ---
-MAX_WORDS = 20000 
-MAX_LEN = 100     
-EMBEDDING_DIM = 128 # INCREASED CAPACITY
-LSTM_UNITS = 150  
+MAX_WORDS = 20000     # Max number of words to keep in the vocabulary
+MAX_LEN = 100         # Max length of a sequence (review)
+EMBEDDING_DIM = 128   # Dimension of the word embeddings (Increased for richer features)
+RNN_UNITS = 150       # MAXIMIZED CAPACITY for LSTM/GRU
+DENSE_UNITS = 256     # Increased density for better feature separation
 NUM_CLASSES = 6
-EPOCHS = 30 
-NUM_REVIEWS = 10 
+EPOCHS = 30           # Max training epochs (Early Stopping will manage actual epochs)
+NUM_REVIEWS = 10      # Constant for the required number of inputs
 
 # Define the emotion labels for mapping
 emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
 label_to_id = {label: i for i, label in enumerate(emotion_labels)}
 id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
-# --- NEW: Advanced Preprocessing Function for Negation Handling ---
+# --- Advanced Preprocessing: Negation Handling ---
 
 def handle_negation(text):
     """
-    Looks for negation words and attaches them to the following word 
-    using an underscore (e.g., 'not happy' -> 'not_happy'). 
-    This forces the model to treat the negated phrase as a single feature, 
-    which resolves common misclassifications like 'I am not happy' -> 'Joy'.
+    Looks for negation words and attaches them to the following word using an underscore.
+    Example: "I am not happy" -> "I am not_happy"
+    This forces the tokenization to treat the negated phrase as a single, negative feature.
     """
-    negation_words = [
-        'not', 'no', 'never', 'none', 'neither', 'nor', 'cannot', 
-        'wont', 'dont', 'isnt', 'wasnt', 'shouldnt', 'wouldnt', 'couldnt'
-    ]
-    
-    # Regex pattern to find a negation word followed by a space and another word
-    # It also handles contractions like won't, don't, etc., already simplified by lowercasing.
-    pattern = r'\b(' + '|'.join(negation_words) + r')\s+([a-zA-Z]+)\b'
-    
-    # Replacement function: group 1 (negation) + '_' + group 2 (word)
-    def replace_negation(match):
-        return match.group(1) + '_' + match.group(2)
-    
-    # Apply the replacement
-    text = re.sub(pattern, replace_negation, text, flags=re.IGNORECASE)
-    
-    return text.lower()
-
+    negation_words = {
+        'not', 'no', 'never', 'none', 'neither', 'nor', 'cannot', 'wasnt', 'isnt',
+        'dont', 'doesnt', 'havent', 'hasnt', 'hardly', 'scarcely', 'barely', 'wont',
+        "wouldn't", "shouldn't", "couldn't"
+    }
+    words = text.split()
+    processed_words = []
+    i = 0
+    while i < len(words):
+        word = words[i].lower()
+        if word in negation_words and i + 1 < len(words):
+            # Attach the negation to the next word
+            processed_words.append(f"{word}_{words[i+1]}")
+            i += 2 # Skip the next word
+        else:
+            processed_words.append(words[i])
+            i += 1
+    return " ".join(processed_words)
 
 # --- Ensemble Model Building Functions ---
 
-def build_cnn_bilstm_model():
-    """Builds the Hybrid CNN-BiLSTM model."""
+def build_cnn_model():
+    """Builds a deeper CNN model for robust local feature extraction."""
     model = Sequential([
         Embedding(MAX_WORDS, EMBEDDING_DIM, input_length=MAX_LEN),
-        Conv1D(filters=128, kernel_size=5, activation='relu'), 
-        GlobalMaxPooling1D(),
-        Dense(150, activation='relu'),
-        Dropout(0.5), 
+        Dropout(0.3),
+        Conv1D(filters=128, kernel_size=5, activation='relu'),
+        GlobalMaxPooling1D(), # Use GlobalMaxPooling after the first Conv layer
+        Dense(DENSE_UNITS, activation='relu'),
+        Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
-def build_bilstm_model_v2():
-    """Builds the pure BiLSTM model with two BiLSTM layers."""
+def build_bilstm_model():
+    """Builds the deep BiLSTM model with recurrent dropout."""
     model = Sequential([
         Embedding(MAX_WORDS, EMBEDDING_DIM, input_length=MAX_LEN),
-        Dropout(0.3), 
-        Bidirectional(LSTM(LSTM_UNITS, return_sequences=True)), 
-        Bidirectional(LSTM(LSTM_UNITS // 2)),
-        Dense(150, activation='relu'),
-        Dropout(0.5), 
+        Dropout(0.3),
+        # Increased recurrent_dropout to fight bias on sequential data
+        Bidirectional(LSTM(RNN_UNITS, recurrent_dropout=0.2, return_sequences=True)),
+        Bidirectional(LSTM(RNN_UNITS // 2, recurrent_dropout=0.2)),
+        Dense(DENSE_UNITS, activation='relu'),
+        Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
 def build_gru_model():
-    """Builds the Bidirectional GRU model."""
+    """Builds the Bidirectional GRU model with recurrent dropout."""
     model = Sequential([
         Embedding(MAX_WORDS, EMBEDDING_DIM, input_length=MAX_LEN),
-        Dropout(0.3), 
-        Bidirectional(GRU(LSTM_UNITS)),
-        Dense(150, activation='relu'),
-        Dropout(0.5), 
+        Dropout(0.3),
+        # Increased recurrent_dropout
+        Bidirectional(GRU(RNN_UNITS, recurrent_dropout=0.2)),
+        Dense(DENSE_UNITS, activation='relu'),
+        Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
@@ -106,95 +109,85 @@ def build_gru_model():
 
 @st.cache_resource
 def load_and_train_model():
-    """
-    Loads data (combining train/validation for more robustness), 
-    applies negation handling, trains the Ensemble, and evaluates.
-    """
-    
-    # 1. Load Data (Using train and validation splits for maximized training data)
+    """Loads data, trains the Ensemble of three models with class weighting and early stopping."""
+
+    # 1. Load Data
     data = load_dataset("dair-ai/emotion", "split")
-    
-    train_texts = list(data['train']['text']) + list(data['validation']['text'])
-    train_labels = list(data['train']['label']) + list(data['validation']['label'])
+
+    # Combine train and validation splits for maximum training data
+    train_texts_combined = list(data['train']['text']) + list(data['validation']['text'])
+    train_labels_combined = list(data['train']['label']) + list(data['validation']['label'])
     test_texts = list(data['test']['text'])
     test_labels = list(data['test']['label'])
-    
-    # 2. Apply Negation Preprocessing to all texts
-    train_texts_processed = [handle_negation(text) for text in train_texts]
+
+    # Apply Negation Preprocessing
+    train_texts_processed = [handle_negation(text) for text in train_texts_combined]
     test_texts_processed = [handle_negation(text) for text in test_texts]
+
+    # Combine processed texts for tokenizer fit
     all_texts = train_texts_processed + test_texts_processed
 
-    # 3. Tokenization and Sequencing
+    # 2. Tokenization and Sequencing
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
     tokenizer.fit_on_texts(all_texts)
 
     train_sequences = tokenizer.texts_to_sequences(train_texts_processed)
     test_sequences = tokenizer.texts_to_sequences(test_texts_processed)
-    
+
     train_padded = pad_sequences(train_sequences, maxlen=MAX_LEN, padding='post', truncating='post')
     test_padded = pad_sequences(test_sequences, maxlen=MAX_LEN, padding='post', truncating='post')
 
     # Convert labels to one-hot encoding
-    train_labels_one_hot = tf.keras.utils.to_categorical(train_labels, num_classes=NUM_CLASSES)
-    
-    # --- BIAS CORRECTION: Calculate Class Weights (Essential for imbalance) ---
-    classes = np.unique(train_labels)
-    weights = compute_class_weight(
-        class_weight='balanced', 
-        classes=classes, 
-        y=train_labels
-    )
-    class_weights_dict = dict(zip(classes, weights))
-    # --- END BIAS CORRECTION ---
-    
-    # 4. Define Early Stopping Callback (Essential for preventing overfitting/bias)
-    early_stopping = EarlyStopping(
-        monitor='val_loss', 
-        patience=5, 
-        restore_best_weights=True, 
-        verbose=0
-    )
-    callbacks = [early_stopping]
-    
-    # 5. Build and Train Ensemble Models
-    
-    models = [
-        build_cnn_bilstm_model(),
-        build_bilstm_model_v2(),
-        build_gru_model()
-    ]
+    train_labels_one_hot = tf.keras.utils.to_categorical(train_labels_combined, num_classes=NUM_CLASSES)
 
-    # Train all models silently
+    # 3. Compute Class Weights (CRITICAL for fixing Joy bias)
+    # The weights penalize misclassification of under-represented classes more heavily.
+    class_weights = compute_class_weight(
+        class_weight='balanced',
+        classes=np.unique(train_labels_combined),
+        y=train_labels_combined
+    )
+    class_weight_dict = {i: weight for i, weight in enumerate(class_weights)}
+
+    # 4. Build and Train Ensemble Models
+    models = [build_cnn_model(), build_bilstm_model(), build_gru_model()]
+
+    # Define Early Stopping Callback
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=5,             # Stop after 5 epochs of no improvement
+        restore_best_weights=True # Keep the best model weights
+    )
+
+    # Train all models silently for maximum accuracy
     for model in models:
-        # Use 10% of the *combined* training data for validation during training
         model.fit(
-            train_padded, 
+            train_padded,
             train_labels_one_hot,
-            epochs=EPOCHS, 
+            epochs=EPOCHS,
             batch_size=32,
-            validation_split=0.1, 
-            verbose=0, 
-            class_weight=class_weights_dict, 
-            callbacks=callbacks 
+            validation_split=0.1, # Using a small validation set for early stopping check
+            verbose=0, # Run silently
+            class_weight=class_weight_dict, # Apply class weights
+            callbacks=[early_stopping] # Apply early stopping
         )
-    
-    # 6. Ensemble Prediction and Evaluation
-    
+
+    # 5. Ensemble Prediction and Evaluation
     # Get predictions (probabilities) from all models
     pred_probs_list = [model.predict(test_padded, verbose=0) for model in models]
-    
+
     # Soft Voting: Average the probabilities across all models
     ensemble_probs = np.mean(pred_probs_list, axis=0)
-    
+
     # Final prediction based on ensemble average
     y_pred = np.argmax(ensemble_probs, axis=1)
-    
+
     # Calculate Metrics based on ensemble prediction
     accuracy = accuracy_score(test_labels, y_pred)
     precision, recall, f1, _ = precision_recall_fscore_support(
         test_labels, y_pred, average='macro', zero_division=0
     )
-    
+
     metrics = {
         'accuracy': accuracy,
         'precision': precision,
@@ -207,67 +200,63 @@ def load_and_train_model():
 
 # --- Prediction Function ---
 def predict_emotion(ensemble_models, tokenizer, text):
-    """
-    Predicts the emotion of a given review text using the ensemble models.
-    Applies negation handling before tokenizing the input text.
-    """
-    # Apply the same preprocessing used during training
-    processed_text = handle_negation(text) 
-    
+    """Predicts the emotion of a given review text using the ensemble models (Soft Voting)."""
+    # Apply the same negation preprocessing used during training
+    processed_text = handle_negation(text)
+
     sequence = tokenizer.texts_to_sequences([processed_text])
     padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN, padding='post', truncating='post')
-    
+
     # Get predictions (probabilities) from all models
     pred_probs_list = [model.predict(padded_sequence, verbose=0) for model in ensemble_models]
-    
+
     # Soft Voting: Average the probabilities across all models
-    ensemble_prediction = np.mean(pred_probs_list, axis=0)[0] 
-    
+    ensemble_prediction = np.mean(pred_probs_list, axis=0)[0] # [0] for single input batch
+
     # Get the index of the highest probability
     predicted_id = np.argmax(ensemble_prediction)
     predicted_label = id_to_label[predicted_id].capitalize()
-    
-    return predicted_label 
+
+    return predicted_label
 
 
-# --- Core Analysis Logic (Unchanged) ---
+# --- Core Analysis Logic ---
 def get_recommendation_and_comment(all_emotions):
     """
     Determines the overall recommended emotion and the buy/no-buy comment.
     Tie-breaking logic: If there's a tie for the highest count, use the emotion from the LAST review (index 9).
     """
     if not all_emotions:
-        return "N/A", "Please enter at least one review for analysis."
+        return "N/A", "Please enter at least one review for analysis.", {}
 
     emotion_counts = Counter(all_emotions)
-    
+
     # 1. Find the maximum count
     max_count = max(emotion_counts.values())
-    
+
     # 2. Find all emotions that share the maximum count
     top_emotions = [emotion for emotion, count in emotion_counts.items() if count == max_count]
 
     # 3. Determine the final dominant emotion
-    dominant_emotion = top_emotions[0] 
+    dominant_emotion = top_emotions[0] # Default to the alphabetically first one found
 
     if len(top_emotions) > 1:
-        # Tie detected: Use the emotion from the last review (Review #10)
+        # Tie detected: Use the emotion from the last review (Review #10) if it is one of the tied emotions
         last_review_emotion = all_emotions[-1]
-        
-        # Check if the last review's emotion is one of the tied dominant emotions
         if last_review_emotion in top_emotions:
             dominant_emotion = last_review_emotion
-        
+        # If the last review's emotion is not one of the tied emotions, we stick to the default (the first one found)
+
     # 4. Generate Comment
+    # Positive emotions are Joy, Love, Surprise. All others (Sadness, Anger, Fear) are negative/cautionary.
     positive_emotions = ['Joy', 'Love', 'Surprise']
-    
+
     if dominant_emotion in positive_emotions:
         comment = (
             f"**Recommendation: BUY!** The dominant sentiment is positive ({dominant_emotion}), "
             "indicating a highly satisfied customer base. This is a strong indicator of product quality."
         )
     else:
-        # Sadness, Anger, Fear
         comment = (
             f"**Recommendation: DO NOT BUY.** The dominant sentiment is negative ({dominant_emotion}), "
             "suggesting significant customer dissatisfaction or potential product issues. Caution is advised."
@@ -277,24 +266,30 @@ def get_recommendation_and_comment(all_emotions):
 
 # --- Main Streamlit App ---
 def main():
-    
+
     # Initialize session state for analysis results
     if 'analysis_results' not in st.session_state:
         st.session_state.analysis_results = []
     if 'product_name' not in st.session_state:
         st.session_state.product_name = ""
+    if 'dominant_emotion' not in st.session_state:
+        st.session_state.dominant_emotion = "N/A"
+    if 'recommendation_comment' not in st.session_state:
+        st.session_state.recommendation_comment = ""
+    if 'emotion_counts' not in st.session_state:
+        st.session_state.emotion_counts = {label.capitalize(): 0 for label in emotion_labels}
 
-    # --- CSS Injection (Unchanged) ---
+    # --- CSS Injection ---
     st.markdown(
         """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap');
-        
-        /* Animated Gradient Background - DARKER COLORS FOR BETTER CONTRAST */
+
+        /* Animated Gradient Background */
         .stApp {
             font-family: 'Poppins', sans-serif;
             color: #FFFFFF;
-            background: linear-gradient(-45deg, #0f002a, #2b0846, #002a3a, #00404a); 
+            background: linear-gradient(-45deg, #0f002a, #2b0846, #002a3a, #00404a);
             background-size: 400% 400%;
             animation: gradientBG 25s ease infinite;
         }
@@ -313,7 +308,7 @@ def main():
             text-align: center;
             padding: 15px;
             border-radius: 12px;
-            background: rgba(0, 0, 0, 0.4); 
+            background: rgba(0, 0, 0, 0.4);
             box-shadow: 0 4px 10px rgba(0, 0, 0, 0.7);
             margin-bottom: 25px;
         }
@@ -341,7 +336,6 @@ def main():
             color: white !important;
             border: 1px solid #7b1296;
         }
-        /* Specific styling for the recommendation box */
         .recommendation-box {
             background-color: #3d0a52;
             padding: 20px;
@@ -364,42 +358,54 @@ def main():
         unsafe_allow_html=True
     )
 
-    # UPDATED APP NAME
-    st.markdown('<div class="header"><h1><span style="color: #FFD700;">🔬</span> Affectlytics <span style="color: #FFD700;">📊</span></h1></div>', unsafe_allow_html=True)
-    
+    st.markdown('<div class="header"><h1><span style="color: #FFD700;">🛍️</span> Affectlytics: Product Sentiment Analyzer <span style="color: #FFD700;">📊</span></h1></div>', unsafe_allow_html=True)
+
     # Load and train the model (cached)
-    models, tokenizer, metrics = load_and_train_model()
+    with st.spinner("Training Ensemble Model... This may take a moment to achieve high accuracy."):
+        models, tokenizer, metrics = load_and_train_model()
 
     # --- Input Section ---
     st.markdown("---")
     st.markdown("<h3 style='color: white;'>Input Product Details and Reviews (10 Required):</h3>", unsafe_allow_html=True)
-    
+
     # Product Name Input
     product_name_input = st.text_input(
-        "Product Name", 
+        "Product Name",
         value=st.session_state.product_name or "Gemini Smartwatch Pro",
         key="product_name_key"
     )
     st.session_state.product_name = product_name_input
-    
+
     # 10 Review Text Inputs
     review_inputs = []
-    
-    # Use columns for a cleaner 2-column layout for reviews
     cols = st.columns(2)
+
+    # Example Reviews (for testing the fix: "not happy" should be Sadness)
+    SAMPLE_REVIEWS = [
+        "I am not happy with this purchase.", # Sadness (Test Case)
+        "This product is amazing and fills me with joy!", # Joy
+        "I absolutely adore the design and quality.", # Love
+        "It broke immediately and this makes me so furious.", # Anger
+        "I am afraid to use this device after the smoke I saw.", # Fear
+        "Wow! I did not expect it to be this good. What a surprise.", # Surprise
+        "This is disappointing, I feel awful about the wasted money.", # Sadness
+        "I would never recommend this, it's terrible quality.", # Anger (Test Negation)
+        "The shipping was quick, which was a pleasant surprise.", # Surprise
+        "Everything about this experience brought me joy." # Joy
+    ]
 
     for i in range(NUM_REVIEWS):
         col_index = i % 2
         with cols[col_index]:
-            default_review = f"Review #{i+1} Example: This is fine, but nothing special."
-            # If we have stored data, use it for sticky inputs
+            default_review = SAMPLE_REVIEWS[i] if i < len(SAMPLE_REVIEWS) else f"Review #{i+1} Example: This is fine, but nothing special."
+            # Use stored data for sticky inputs if analysis has been run
             if len(st.session_state.analysis_results) == NUM_REVIEWS:
                  default_review = st.session_state.analysis_results[i]['review']
-            
+
             review_text = st.text_area(
-                f"Review #{i+1}", 
-                value=default_review, 
-                height=100, 
+                f"Review #{i+1}",
+                value=default_review,
+                height=100,
                 key=f"review_{i}"
             )
             review_inputs.append(review_text)
@@ -409,16 +415,18 @@ def main():
         st.session_state.analysis_results = []
         all_emotions = []
 
-        # Process each review
+        # Check for empty reviews
         for i, review in enumerate(review_inputs):
             if not review.strip():
                 st.warning(f"Review #{i+1} is empty. Please fill all 10 inputs.")
-                st.session_state.analysis_results = [] # Clear results if incomplete
+                st.session_state.analysis_results = []
                 return
 
+        # Process each review
+        for i, review in enumerate(review_inputs):
             predicted_emotion = predict_emotion(models, tokenizer, review)
             all_emotions.append(predicted_emotion)
-            
+
             st.session_state.analysis_results.append({
                 'product': st.session_state.product_name,
                 'review_number': i + 1,
@@ -428,17 +436,19 @@ def main():
 
         # Generate final summary and recommendation
         dominant_emotion, recommendation_comment, emotion_counts = get_recommendation_and_comment(all_emotions)
-        
+
         st.session_state.dominant_emotion = dominant_emotion
         st.session_state.recommendation_comment = recommendation_comment
         st.session_state.emotion_counts = emotion_counts
+        # Force rerun to display results after processing
+        st.rerun()
 
 
     # --- Results Display ---
-    if st.session_state.analysis_results:
+    if st.session_state.analysis_results and st.session_state.dominant_emotion != "N/A":
         st.markdown("<hr style='border: 1px solid #FFD700;'>", unsafe_allow_html=True)
         st.markdown(f"<h2>Analysis Results for: <span style='color:#FFD700;'>{st.session_state.product_name}</span></h2>", unsafe_allow_html=True)
-        
+
         # 1. Display Table with Detected Emotion
         results_df = pd.DataFrame(st.session_state.analysis_results)
         results_df = results_df.rename(columns={
@@ -446,25 +456,27 @@ def main():
             'review': 'Review Text',
             'emotion': 'Detected Emotion'
         })
-        # Remove 'product' column for cleaner display in table
         st.table(results_df[['Review #', 'Review Text', 'Detected Emotion']])
 
         # 2. Display Emotion Count (at the bottom of the project)
         st.markdown("<hr style='border: 1px solid #7b1296;'>", unsafe_allow_html=True)
         st.markdown("<h3 style='color: white;'>Overall Emotion Counts:</h3>", unsafe_allow_html=True)
-        
-        # Convert Counter to DataFrame for display
+
+        # Ensure all 6 emotions are present in the display, even if count is 0
+        all_counts = {label.capitalize(): 0 for label in emotion_labels}
+        all_counts.update(st.session_state.emotion_counts)
+
         count_data = pd.DataFrame(
-            st.session_state.emotion_counts.items(), 
+            all_counts.items(),
             columns=['Emotion', 'Count']
         ).set_index('Emotion').sort_values(by='Count', ascending=False)
-        
+
         st.dataframe(count_data)
-        
+
         # 3. Final Recommendation and Buy/No-Buy Comment
         st.markdown('<div class="recommendation-box">', unsafe_allow_html=True)
         st.markdown(
-            f"<h3>Final Recommendation Based on Sentiment:</h3>", 
+            f"<h3>Final Recommendation Based on Sentiment:</h3>",
             unsafe_allow_html=True
         )
         st.markdown(
@@ -475,10 +487,10 @@ def main():
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-    # --- Evaluation Metrics Display (Unchanged) ---
+    # --- Evaluation Metrics Display (Model Diagnostics) ---
     st.markdown("---")
     st.markdown("<h2 style='color: #FFD700; text-align: center;'>Model Evaluation Metrics (Background System)</h2>", unsafe_allow_html=True)
-    
+
     col1, col2, col3, col4 = st.columns(4)
 
     def display_metric(col, label, value):
@@ -495,7 +507,7 @@ def main():
     display_metric(col4, "Macro F1-Score", metrics['f1_score'])
 
     TARGET_ACCURACY = 0.95
-    
+
     if metrics['accuracy'] >= TARGET_ACCURACY:
         st.success(f"✅ Target Accuracy of {TARGET_ACCURACY*100:.0f}% Achieved! Current Accuracy: {metrics['accuracy']:.4f}")
     else:
