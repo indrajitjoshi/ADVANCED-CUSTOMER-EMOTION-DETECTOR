@@ -25,7 +25,7 @@ EMBEDDING_DIM = 128   # Dimension of the word embeddings (Consistent with common
 RNN_UNITS = 200       # MAXIMIZED CAPACITY for LSTM/GRU
 DENSE_UNITS = 512     # MAXIMIZED CAPACITY for feature separation (CRITICAL FIX)
 NUM_CLASSES = 6
-EPOCHS = 5            # CRITICAL FIX: Reduced max epochs for quicker startup time
+EPOCHS = 2            # CRITICAL FIX: Reduced max epochs for quickest startup time
 NUM_REVIEWS = 10      # Constant for the required number of inputs
 CONV_FILTERS = 256    # Increased filter count for deeper CNN
 TRAINABLE_EMBEDDING = False # CRITICAL NLP improvement: Use pre-trained weights, do not train them.
@@ -121,7 +121,7 @@ def build_bilstm_model(embedding_matrix, vocab_size):
         # Second BiLSTM layer (CRITICAL: Added depth)
         Bidirectional(LSTM(RNN_UNITS, recurrent_dropout=0.2, return_sequences=True)),
         # Third BiLSTM layer (Removed recurrent_dropout for stability)
-        Bidirectional(LSTM(RNN_UNITS // 2)), # REMOVED recurrent_dropout=0.2
+        Bidirectional(LSTM(RNN_UNITS // 2)),
         Dense(DENSE_UNITS, activation='relu'), # MAXIMIZED DENSE LAYER
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
@@ -140,7 +140,7 @@ def build_gru_model(embedding_matrix, vocab_size):
             trainable=TRAINABLE_EMBEDDING
         ),
         Dropout(0.3),
-        Bidirectional(GRU(RNN_UNITS)), # REMOVED recurrent_dropout=0.2 for stability
+        Bidirectional(GRU(RNN_UNITS)), # Removed recurrent_dropout for stability
         Dense(DENSE_UNITS, activation='relu'), # MAXIMIZED DENSE LAYER
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
@@ -219,7 +219,7 @@ def load_and_train_model():
         model.fit(
             train_padded,
             train_labels_one_hot,
-            epochs=EPOCHS, # Uses the low EPOCHS=5 cap for fast startup
+            epochs=EPOCHS, # Uses the low EPOCHS=2 cap for fast startup
             batch_size=32,
             validation_split=0.1,
             verbose=0,
@@ -553,4 +553,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
