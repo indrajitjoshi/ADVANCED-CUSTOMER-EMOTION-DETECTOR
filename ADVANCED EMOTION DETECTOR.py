@@ -25,7 +25,7 @@ EMBEDDING_DIM = 128   # Dimension of the word embeddings (Consistent with common
 RNN_UNITS = 200       # MAXIMIZED CAPACITY for LSTM/GRU
 DENSE_UNITS = 512     # MAXIMIZED CAPACITY for feature separation
 NUM_CLASSES = 6
-EPOCHS = 3            # OPTIMIZED: Increased slightly for accuracy, yet much faster than original 30
+EPOCHS = 5            # OPTIMIZED: Increased to 5 for accuracy stabilization
 NUM_REVIEWS = 10      # Constant for the required number of inputs
 CONV_FILTERS = 256    # Increased filter count for deeper CNN
 TRAINABLE_EMBEDDING = False # CRITICAL NLP improvement: Use pre-trained weights, do not train them.
@@ -219,7 +219,7 @@ def load_and_train_model():
         model.fit(
             train_padded,
             train_labels_one_hot,
-            epochs=EPOCHS, # Uses the low EPOCHS=3 cap for fast startup
+            epochs=EPOCHS, # Uses the optimized EPOCHS=5 cap for stabilization
             batch_size=32,
             validation_split=0.1,
             verbose=0,
@@ -553,3 +553,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
