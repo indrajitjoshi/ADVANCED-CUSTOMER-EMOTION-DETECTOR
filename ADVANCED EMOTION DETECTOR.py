@@ -1,6 +1,7 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import re
 from datasets import load_dataset
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 from sklearn.utils.class_weight import compute_class_weight 
@@ -8,7 +9,7 @@ from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU
-from tensorflow.keras.callbacks import EarlyStopping # NEW: Added for robust training
+from tensorflow.keras.callbacks import EarlyStopping 
 import os
 from collections import Counter 
 
@@ -17,21 +18,48 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
 # --- Configuration ---
-MAX_WORDS = 20000 # Max number of words to keep in the vocabulary
-MAX_LEN = 100     # Max length of a sequence (review)
-EMBEDDING_DIM = 100 # Dimension of the word embeddings
-LSTM_UNITS = 150  # MAXIMIZED CAPACITY
+MAX_WORDS = 20000 
+MAX_LEN = 100     
+EMBEDDING_DIM = 128 # INCREASED CAPACITY
+LSTM_UNITS = 150  
 NUM_CLASSES = 6
-# NOTE: EPOCHS is kept high, but EarlyStopping will prevent true overfitting.
 EPOCHS = 30 
-NUM_REVIEWS = 10 # Constant for the required number of inputs
+NUM_REVIEWS = 10 
 
 # Define the emotion labels for mapping
 emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
 label_to_id = {label: i for i, label in enumerate(emotion_labels)}
 id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
-# --- Ensemble Model Building Functions (Designed for High Accuracy) ---
+# --- NEW: Advanced Preprocessing Function for Negation Handling ---
+
+def handle_negation(text):
+    """
+    Looks for negation words and attaches them to the following word 
+    using an underscore (e.g., 'not happy' -> 'not_happy'). 
+    This forces the model to treat the negated phrase as a single feature, 
+    which resolves common misclassifications like 'I am not happy' -> 'Joy'.
+    """
+    negation_words = [
+        'not', 'no', 'never', 'none', 'neither', 'nor', 'cannot', 
+        'wont', 'dont', 'isnt', 'wasnt', 'shouldnt', 'wouldnt', 'couldnt'
+    ]
+    
+    # Regex pattern to find a negation word followed by a space and another word
+    # It also handles contractions like won't, don't, etc., already simplified by lowercasing.
+    pattern = r'\b(' + '|'.join(negation_words) + r')\s+([a-zA-Z]+)\b'
+    
+    # Replacement function: group 1 (negation) + '_' + group 2 (word)
+    def replace_negation(match):
+        return match.group(1) + '_' + match.group(2)
+    
+    # Apply the replacement
+    text = re.sub(pattern, replace_negation, text, flags=re.IGNORECASE)
+    
+    return text.lower()
+
+
+# --- Ensemble Model Building Functions ---
 
 def build_cnn_bilstm_model():
     """Builds the Hybrid CNN-BiLSTM model."""
@@ -40,7 +68,7 @@ def build_cnn_bilstm_model():
         Conv1D(filters=128, kernel_size=5, activation='relu'), 
         GlobalMaxPooling1D(),
         Dense(150, activation='relu'),
-        Dropout(0.5), # High Dropout for strong regularization
+        Dropout(0.5), 
         Dense(NUM_CLASSES, activation='softmax')
     ])
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
@@ -50,11 +78,11 @@ def build_bilstm_model_v2():
     """Builds the pure BiLSTM model with two BiLSTM layers."""
     model = Sequential([
         Embedding(MAX_WORDS, EMBEDDING_DIM, input_length=MAX_LEN),
-        Dropout(0.3), # Strong Dropout
+        Dropout(0.3), 
         Bidirectional(LSTM(LSTM_UNITS, return_sequences=True)), 
         Bidirectional(LSTM(LSTM_UNITS // 2)),
         Dense(150, activation='relu'),
-        Dropout(0.5), # High Dropout for strong regularization
+        Dropout(0.5), 
         Dense(NUM_CLASSES, activation='softmax')
     ])
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
@@ -64,10 +92,10 @@ def build_gru_model():
     """Builds the Bidirectional GRU model."""
     model = Sequential([
         Embedding(MAX_WORDS, EMBEDDING_DIM, input_length=MAX_LEN),
-        Dropout(0.3), # Strong Dropout
+        Dropout(0.3), 
         Bidirectional(GRU(LSTM_UNITS)),
         Dense(150, activation='relu'),
-        Dropout(0.5), # High Dropout for strong regularization
+        Dropout(0.5), 
         Dense(NUM_CLASSES, activation='softmax')
     ])
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
@@ -78,25 +106,30 @@ def build_gru_model():
 
 @st.cache_resource
 def load_and_train_model():
-    """Loads data, trains the Ensemble of three models, and evaluates them using soft voting."""
+    """
+    Loads data (combining train/validation for more robustness), 
+    applies negation handling, trains the Ensemble, and evaluates.
+    """
     
-    # 1. Load Data
+    # 1. Load Data (Using train and validation splits for maximized training data)
     data = load_dataset("dair-ai/emotion", "split")
     
-    train_texts = list(data['train']['text'])
-    train_labels = list(data['train']['label'])
+    train_texts = list(data['train']['text']) + list(data['validation']['text'])
+    train_labels = list(data['train']['label']) + list(data['validation']['label'])
     test_texts = list(data['test']['text'])
     test_labels = list(data['test']['label'])
     
-    # Combine train and test into one pool for tokenizer fit
-    all_texts = train_texts + test_texts
+    # 2. Apply Negation Preprocessing to all texts
+    train_texts_processed = [handle_negation(text) for text in train_texts]
+    test_texts_processed = [handle_negation(text) for text in test_texts]
+    all_texts = train_texts_processed + test_texts_processed
 
-    # 2. Tokenization and Sequencing
+    # 3. Tokenization and Sequencing
     tokenizer = Tokenizer(num_words=MAX_WORDS, oov_token="<unk>")
     tokenizer.fit_on_texts(all_texts)
 
-    train_sequences = tokenizer.texts_to_sequences(train_texts)
-    test_sequences = tokenizer.texts_to_sequences(test_texts)
+    train_sequences = tokenizer.texts_to_sequences(train_texts_processed)
+    test_sequences = tokenizer.texts_to_sequences(test_texts_processed)
     
     train_padded = pad_sequences(train_sequences, maxlen=MAX_LEN, padding='post', truncating='post')
     test_padded = pad_sequences(test_sequences, maxlen=MAX_LEN, padding='post', truncating='post')
@@ -114,16 +147,16 @@ def load_and_train_model():
     class_weights_dict = dict(zip(classes, weights))
     # --- END BIAS CORRECTION ---
     
-    # 3. Define Early Stopping Callback (Essential for preventing overfitting/bias)
+    # 4. Define Early Stopping Callback (Essential for preventing overfitting/bias)
     early_stopping = EarlyStopping(
         monitor='val_loss', 
-        patience=5, # Stop if validation loss doesn't improve for 5 epochs
-        restore_best_weights=True, # Load the best weights found
+        patience=5, 
+        restore_best_weights=True, 
         verbose=0
     )
     callbacks = [early_stopping]
     
-    # 4. Build and Train Ensemble Models
+    # 5. Build and Train Ensemble Models
     
     models = [
         build_cnn_bilstm_model(),
@@ -133,18 +166,19 @@ def load_and_train_model():
 
     # Train all models silently
     for model in models:
+        # Use 10% of the *combined* training data for validation during training
         model.fit(
             train_padded, 
             train_labels_one_hot,
             epochs=EPOCHS, 
             batch_size=32,
-            validation_split=0.1,
-            verbose=0, # Run silently
-            class_weight=class_weights_dict, # Apply the calculated weights
-            callbacks=callbacks # Apply early stopping for robustness
+            validation_split=0.1, 
+            verbose=0, 
+            class_weight=class_weights_dict, 
+            callbacks=callbacks 
         )
     
-    # 5. Ensemble Prediction and Evaluation
+    # 6. Ensemble Prediction and Evaluation
     
     # Get predictions (probabilities) from all models
     pred_probs_list = [model.predict(test_padded, verbose=0) for model in models]
@@ -171,17 +205,23 @@ def load_and_train_model():
     return models, tokenizer, metrics
 
 
-# --- Prediction Function (Unchanged) ---
+# --- Prediction Function ---
 def predict_emotion(ensemble_models, tokenizer, text):
-    """Predicts the emotion of a given review text using the ensemble models (Soft Voting)."""
-    sequence = tokenizer.texts_to_sequences([text])
+    """
+    Predicts the emotion of a given review text using the ensemble models.
+    Applies negation handling before tokenizing the input text.
+    """
+    # Apply the same preprocessing used during training
+    processed_text = handle_negation(text) 
+    
+    sequence = tokenizer.texts_to_sequences([processed_text])
     padded_sequence = pad_sequences(sequence, maxlen=MAX_LEN, padding='post', truncating='post')
     
     # Get predictions (probabilities) from all models
     pred_probs_list = [model.predict(padded_sequence, verbose=0) for model in ensemble_models]
     
     # Soft Voting: Average the probabilities across all models
-    ensemble_prediction = np.mean(pred_probs_list, axis=0)[0] # [0] for single input batch
+    ensemble_prediction = np.mean(pred_probs_list, axis=0)[0] 
     
     # Get the index of the highest probability
     predicted_id = np.argmax(ensemble_prediction)
@@ -463,4 +503,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
