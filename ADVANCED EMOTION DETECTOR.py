@@ -23,9 +23,9 @@ MAX_WORDS = 20000     # Max number of words to keep in the vocabulary
 MAX_LEN = 128         # Max length of a sequence (Increased for better context)
 EMBEDDING_DIM = 128   # Dimension of the word embeddings (Consistent with common pre-trained sizes)
 RNN_UNITS = 200       # MAXIMIZED CAPACITY for LSTM/GRU
-DENSE_UNITS = 512     # MAXIMIZED CAPACITY for feature separation (CRITICAL FIX)
+DENSE_UNITS = 512     # MAXIMIZED CAPACITY for feature separation
 NUM_CLASSES = 6
-EPOCHS = 2            # CRITICAL FIX: Reduced max epochs for quickest startup time
+EPOCHS = 3            # OPTIMIZED: Increased slightly for accuracy, yet much faster than original 30
 NUM_REVIEWS = 10      # Constant for the required number of inputs
 CONV_FILTERS = 256    # Increased filter count for deeper CNN
 TRAINABLE_EMBEDDING = False # CRITICAL NLP improvement: Use pre-trained weights, do not train them.
@@ -49,19 +49,19 @@ def handle_negation(text):
         'dont', 'doesnt', 'havent', 'hasnt', 'hardly', 'scarcely', 'barely', 'wont',
         "wouldn't", "shouldn't", "couldn't", 'without', 'isn\'t', 'don\'t', 'won\'t'
     }
-    
+
     words = text.split()
     processed_words = []
     negation_detected = False
     i = 0
-    
+
     while i < len(words):
         word = words[i].lower()
-        
+
         # Check for negation: if found, set the flag
         if word in negation_words:
             negation_detected = True
-            
+
             # Form 1: Attach negation to the next word
             if i + 1 < len(words):
                 processed_words.append(f"{word}_{words[i+1]}")
@@ -72,13 +72,13 @@ def handle_negation(text):
         else:
             processed_words.append(words[i])
             i += 1
-            
+
     processed_text = " ".join(processed_words)
-    
+
     # Form 2: Append global negation flag
     if negation_detected:
         processed_text += " __NEGATED__"
-        
+
     return processed_text
 
 # --- Ensemble Model Building Functions (Updated to use vocab_size) ---
@@ -87,11 +87,11 @@ def build_cnn_model(embedding_matrix, vocab_size):
     """Builds a deeper, two-layer CNN model with frozen pre-trained embeddings."""
     model = Sequential([
         Embedding(
-            vocab_size, 
+            vocab_size,
             EMBEDDING_DIM,
-            embeddings_initializer=Constant(embedding_matrix), 
+            embeddings_initializer=Constant(embedding_matrix),
             input_length=MAX_LEN,
-            trainable=TRAINABLE_EMBEDDING 
+            trainable=TRAINABLE_EMBEDDING
         ),
         Dropout(0.3),
         # Two stacked Conv layers for deeper local pattern recognition
@@ -109,7 +109,7 @@ def build_bilstm_model(embedding_matrix, vocab_size):
     """Builds the deep BiLSTM model with a three-layer stack for maximum context retention."""
     model = Sequential([
         Embedding(
-            vocab_size, 
+            vocab_size,
             EMBEDDING_DIM,
             embeddings_initializer=Constant(embedding_matrix),
             input_length=MAX_LEN,
@@ -133,7 +133,7 @@ def build_gru_model(embedding_matrix, vocab_size):
     """Builds the Bidirectional GRU model with increased density."""
     model = Sequential([
         Embedding(
-            vocab_size, 
+            vocab_size,
             EMBEDDING_DIM,
             embeddings_initializer=Constant(embedding_matrix),
             input_length=MAX_LEN,
@@ -185,10 +185,10 @@ def load_and_train_model():
     # Convert labels to one-hot encoding
     train_labels_one_hot = tf.keras.utils.to_categorical(train_labels_combined, num_classes=NUM_CLASSES)
 
-    # 3. Simulate Pre-trained Embedding Matrix 
+    # 3. Simulate Pre-trained Embedding Matrix
     word_index = tokenizer.word_index
     num_words = min(MAX_WORDS, len(word_index) + 1)
-    
+
     # Initialize embedding matrix with correct size
     embedding_matrix = np.random.uniform(-0.05, 0.05, size=(num_words, EMBEDDING_DIM))
 
@@ -219,7 +219,7 @@ def load_and_train_model():
         model.fit(
             train_padded,
             train_labels_one_hot,
-            epochs=EPOCHS, # Uses the low EPOCHS=2 cap for fast startup
+            epochs=EPOCHS, # Uses the low EPOCHS=3 cap for fast startup
             batch_size=32,
             validation_split=0.1,
             verbose=0,
@@ -553,3 +553,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
