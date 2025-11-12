@@ -1,4 +1,4 @@
-# Affectlytics: Product Sentiment Analysis with Advanced Negation Handling and Frozen Embeddings
+# Affectlytics: Product Sentiment Analysis with Advanced Negation Handling and Fine-tuned Embeddings
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -25,10 +25,10 @@ EMBEDDING_DIM = 128   # Dimension of the word embeddings (Consistent with common
 RNN_UNITS = 200       # MAXIMIZED CAPACITY for LSTM/GRU
 DENSE_UNITS = 512     # MAXIMIZED CAPACITY for feature separation
 NUM_CLASSES = 6
-EPOCHS = 5            # OPTIMIZED: Increased to 5 for accuracy stabilization
+EPOCHS = 10           # CRITICAL: Increased to 10 for maximum accuracy and stability
 NUM_REVIEWS = 10      # Constant for the required number of inputs
 CONV_FILTERS = 256    # Increased filter count for deeper CNN
-TRAINABLE_EMBEDDING = False # CRITICAL NLP improvement: Use pre-trained weights, do not train them.
+TRAINABLE_EMBEDDING = True # CRITICAL FIX: Allow embeddings to be fine-tuned to integrate custom tokens.
 
 # Define the emotion labels for mapping
 emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
@@ -84,7 +84,7 @@ def handle_negation(text):
 # --- Ensemble Model Building Functions (Updated to use vocab_size) ---
 
 def build_cnn_model(embedding_matrix, vocab_size):
-    """Builds a deeper, two-layer CNN model with frozen pre-trained embeddings."""
+    """Builds a deeper, two-layer CNN model with fine-tuned pre-trained embeddings."""
     model = Sequential([
         Embedding(
             vocab_size,
@@ -154,7 +154,7 @@ def build_gru_model(embedding_matrix, vocab_size):
 def load_and_train_model():
     """
     Loads data, computes class weights, simulates pre-trained embeddings,
-    and trains the Ensemble models with frozen embeddings and early stopping.
+    and trains the Ensemble models with fine-tuned embeddings and early stopping.
     """
 
     # 1. Load Data
@@ -219,7 +219,7 @@ def load_and_train_model():
         model.fit(
             train_padded,
             train_labels_one_hot,
-            epochs=EPOCHS, # Uses the optimized EPOCHS=5 cap for stabilization
+            epochs=EPOCHS, # Uses the maximized EPOCHS=10 cap for stabilization
             batch_size=32,
             validation_split=0.1,
             verbose=0,
