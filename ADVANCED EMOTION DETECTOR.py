@@ -120,8 +120,8 @@ def build_bilstm_model(embedding_matrix, vocab_size):
         Bidirectional(LSTM(RNN_UNITS, recurrent_dropout=0.2, return_sequences=True)),
         # Second BiLSTM layer (CRITICAL: Added depth)
         Bidirectional(LSTM(RNN_UNITS, recurrent_dropout=0.2, return_sequences=True)),
-        # Third BiLSTM layer (Reduced units for sequence compression)
-        Bidirectional(LSTM(RNN_UNITS // 2, recurrent_dropout=0.2)),
+        # Third BiLSTM layer (Removed recurrent_dropout for stability)
+        Bidirectional(LSTM(RNN_UNITS // 2)), # REMOVED recurrent_dropout=0.2
         Dense(DENSE_UNITS, activation='relu'), # MAXIMIZED DENSE LAYER
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
@@ -140,7 +140,7 @@ def build_gru_model(embedding_matrix, vocab_size):
             trainable=TRAINABLE_EMBEDDING
         ),
         Dropout(0.3),
-        Bidirectional(GRU(RNN_UNITS, recurrent_dropout=0.2)),
+        Bidirectional(GRU(RNN_UNITS)), # REMOVED recurrent_dropout=0.2 for stability
         Dense(DENSE_UNITS, activation='relu'), # MAXIMIZED DENSE LAYER
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
