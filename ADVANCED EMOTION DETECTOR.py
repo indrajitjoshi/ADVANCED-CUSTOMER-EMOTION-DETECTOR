@@ -64,11 +64,11 @@ def handle_negation(text):
 
 # --- Ensemble Model Building Functions ---
 
-def build_cnn_model(embedding_matrix):
+def build_cnn_model(embedding_matrix, vocab_size):
     """Builds a deeper, two-layer CNN model with frozen pre-trained embeddings."""
     model = Sequential([
         Embedding(
-            MAX_WORDS,
+            vocab_size, # FIX: Use calculated vocab_size for input_dim
             EMBEDDING_DIM,
             embeddings_initializer=Constant(embedding_matrix), # Initialize with pre-trained weights
             input_length=MAX_LEN,
@@ -86,11 +86,11 @@ def build_cnn_model(embedding_matrix):
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
-def build_bilstm_model(embedding_matrix):
+def build_bilstm_model(embedding_matrix, vocab_size):
     """Builds the deep BiLSTM model with frozen pre-trained embeddings."""
     model = Sequential([
         Embedding(
-            MAX_WORDS,
+            vocab_size, # FIX: Use calculated vocab_size for input_dim
             EMBEDDING_DIM,
             embeddings_initializer=Constant(embedding_matrix),
             input_length=MAX_LEN,
@@ -106,11 +106,11 @@ def build_bilstm_model(embedding_matrix):
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
     return model
 
-def build_gru_model(embedding_matrix):
+def build_gru_model(embedding_matrix, vocab_size):
     """Builds the Bidirectional GRU model with frozen pre-trained embeddings."""
     model = Sequential([
         Embedding(
-            MAX_WORDS,
+            vocab_size, # FIX: Use calculated vocab_size for input_dim
             EMBEDDING_DIM,
             embeddings_initializer=Constant(embedding_matrix),
             input_length=MAX_LEN,
@@ -162,15 +162,14 @@ def load_and_train_model():
     # Convert labels to one-hot encoding
     train_labels_one_hot = tf.keras.utils.to_categorical(train_labels_combined, num_classes=NUM_CLASSES)
 
-    # 3. Simulate Pre-trained Embedding Matrix (CRITICAL NLP STEP)
-    # In a real-world scenario, you would load GloVe/Word2Vec vectors here.
-    # We initialize with random vectors but set 'trainable=False' to simulate
-    # transfer learning and prevent training from scratch (which causes the Joy bias).
+    # 3. Simulate Pre-trained Embedding Matrix (CRITICAL FIX)
     word_index = tokenizer.word_index
+    # Calculate the actual vocabulary size that the matrix should cover
     num_words = min(MAX_WORDS, len(word_index) + 1)
-    # Initialize embedding matrix with zeros/random values
+    
+    # Initialize embedding matrix with correct size
     embedding_matrix = np.random.uniform(-0.05, 0.05, size=(num_words, EMBEDDING_DIM))
-    # Note: In a real app, external vectors would populate this matrix.
+    # This matrix size now matches the vocab_size passed to the Embedding layer.
 
     # 4. Compute Class Weights (To combat overall class imbalance)
     class_weights = compute_class_weight(
@@ -181,11 +180,11 @@ def load_and_train_model():
     class_weight_dict = {i: weight for i, weight in enumerate(class_weights)}
 
     # 5. Build and Train Ensemble Models
-    # Pass the simulated embedding matrix to all models
+    # Pass the simulated embedding matrix AND the calculated vocabulary size to all models
     models = [
-        build_cnn_model(embedding_matrix),
-        build_bilstm_model(embedding_matrix),
-        build_gru_model(embedding_matrix)
+        build_cnn_model(embedding_matrix, num_words),
+        build_bilstm_model(embedding_matrix, num_words),
+        build_gru_model(embedding_matrix, num_words)
     ]
 
     # Define Early Stopping Callback
@@ -228,7 +227,7 @@ def load_and_train_model():
     return models, tokenizer, metrics
 
 
-# --- Prediction Function ---
+# --- Prediction Function (Unchanged) ---
 def predict_emotion(ensemble_models, tokenizer, text):
     """Predicts the emotion of a given review text using the ensemble models (Soft Voting)."""
     # Apply the same negation preprocessing used during training
@@ -534,6 +533,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
