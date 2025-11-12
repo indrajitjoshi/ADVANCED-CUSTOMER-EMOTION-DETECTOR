@@ -39,40 +39,59 @@ id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
 def handle_negation(text):
     """
-    Looks for negation words and attaches them to the following word using an underscore.
-    Example: "I am not happy" -> "I am not_happy"
-    This forces the tokenization to treat the negated phrase as a single, negative feature.
+    Applies two forms of negation handling:
+    1. Attaches negation words to the following word (e.g., "not happy" -> "not_happy").
+    2. Appends a global __NEGATED__ flag to the text if any negation is detected.
+    This flag is a powerful, dense feature to combat Joy-bias.
     """
     negation_words = {
         'not', 'no', 'never', 'none', 'neither', 'nor', 'cannot', 'wasnt', 'isnt',
         'dont', 'doesnt', 'havent', 'hasnt', 'hardly', 'scarcely', 'barely', 'wont',
         "wouldn't", "shouldn't", "couldn't", 'without', 'isn\'t', 'don\'t', 'won\'t'
     }
+    
     words = text.split()
     processed_words = []
+    negation_detected = False
     i = 0
+    
     while i < len(words):
         word = words[i].lower()
-        if word in negation_words and i + 1 < len(words):
-            # Attach the negation to the next word
-            processed_words.append(f"{word}_{words[i+1]}")
-            i += 2 # Skip the next word
+        
+        # Check for negation: if found, set the flag
+        if word in negation_words:
+            negation_detected = True
+            
+            # Form 1: Attach negation to the next word
+            if i + 1 < len(words):
+                processed_words.append(f"{word}_{words[i+1]}")
+                i += 2 # Skip the next word
+            else:
+                processed_words.append(words[i])
+                i += 1
         else:
             processed_words.append(words[i])
             i += 1
-    return " ".join(processed_words)
+            
+    processed_text = " ".join(processed_words)
+    
+    # Form 2: Append global negation flag
+    if negation_detected:
+        processed_text += " __NEGATED__"
+        
+    return processed_text
 
-# --- Ensemble Model Building Functions ---
+# --- Ensemble Model Building Functions (Updated to use vocab_size) ---
 
 def build_cnn_model(embedding_matrix, vocab_size):
     """Builds a deeper, two-layer CNN model with frozen pre-trained embeddings."""
     model = Sequential([
         Embedding(
-            vocab_size, # FIX: Use calculated vocab_size for input_dim
+            vocab_size, 
             EMBEDDING_DIM,
-            embeddings_initializer=Constant(embedding_matrix), # Initialize with pre-trained weights
+            embeddings_initializer=Constant(embedding_matrix), 
             input_length=MAX_LEN,
-            trainable=TRAINABLE_EMBEDDING # Set to False for Transfer Learning
+            trainable=TRAINABLE_EMBEDDING 
         ),
         Dropout(0.3),
         # Two stacked Conv layers for deeper local pattern recognition
@@ -90,7 +109,7 @@ def build_bilstm_model(embedding_matrix, vocab_size):
     """Builds the deep BiLSTM model with frozen pre-trained embeddings."""
     model = Sequential([
         Embedding(
-            vocab_size, # FIX: Use calculated vocab_size for input_dim
+            vocab_size, 
             EMBEDDING_DIM,
             embeddings_initializer=Constant(embedding_matrix),
             input_length=MAX_LEN,
@@ -110,7 +129,7 @@ def build_gru_model(embedding_matrix, vocab_size):
     """Builds the Bidirectional GRU model with frozen pre-trained embeddings."""
     model = Sequential([
         Embedding(
-            vocab_size, # FIX: Use calculated vocab_size for input_dim
+            vocab_size, 
             EMBEDDING_DIM,
             embeddings_initializer=Constant(embedding_matrix),
             input_length=MAX_LEN,
@@ -162,14 +181,14 @@ def load_and_train_model():
     # Convert labels to one-hot encoding
     train_labels_one_hot = tf.keras.utils.to_categorical(train_labels_combined, num_classes=NUM_CLASSES)
 
-    # 3. Simulate Pre-trained Embedding Matrix (CRITICAL FIX)
+    # 3. Simulate Pre-trained Embedding Matrix 
     word_index = tokenizer.word_index
-    # Calculate the actual vocabulary size that the matrix should cover
     num_words = min(MAX_WORDS, len(word_index) + 1)
     
     # Initialize embedding matrix with correct size
     embedding_matrix = np.random.uniform(-0.05, 0.05, size=(num_words, EMBEDDING_DIM))
-    # This matrix size now matches the vocab_size passed to the Embedding layer.
+    # We rely on this random initialization + freezing to force the model to learn 
+    # negation based on the dense __NEGATED__ flag feature.
 
     # 4. Compute Class Weights (To combat overall class imbalance)
     class_weights = compute_class_weight(
@@ -180,7 +199,6 @@ def load_and_train_model():
     class_weight_dict = {i: weight for i, weight in enumerate(class_weights)}
 
     # 5. Build and Train Ensemble Models
-    # Pass the simulated embedding matrix AND the calculated vocabulary size to all models
     models = [
         build_cnn_model(embedding_matrix, num_words),
         build_bilstm_model(embedding_matrix, num_words),
@@ -227,7 +245,7 @@ def load_and_train_model():
     return models, tokenizer, metrics
 
 
-# --- Prediction Function (Unchanged) ---
+# --- Prediction Function (Updated to use new preprocessing) ---
 def predict_emotion(ensemble_models, tokenizer, text):
     """Predicts the emotion of a given review text using the ensemble models (Soft Voting)."""
     # Apply the same negation preprocessing used during training
