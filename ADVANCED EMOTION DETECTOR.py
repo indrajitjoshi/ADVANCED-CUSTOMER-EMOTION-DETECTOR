@@ -3,12 +3,13 @@ import numpy as np
 import pandas as pd
 from datasets import load_dataset
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+from sklearn.utils.class_weight import compute_class_weight # ADDED for bias correction
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU
 import os
-from collections import Counter # Needed for counting emotions
+from collections import Counter 
 
 # Suppress TensorFlow logging messages and warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -20,15 +21,17 @@ MAX_LEN = 100     # Max length of a sequence (review)
 EMBEDDING_DIM = 100 # Dimension of the word embeddings
 LSTM_UNITS = 150  # MAXIMIZED CAPACITY
 NUM_CLASSES = 6
-EPOCHS = 30 # Max training epochs for highest accuracy potential
-NUM_REVIEWS = 10 # New constant for the required number of inputs
+# Max training epochs for highest accuracy potential. Pushing this value
+# attempts to maximize performance but can increase training time significantly.
+EPOCHS = 30 
+NUM_REVIEWS = 10 # Constant for the required number of inputs
 
 # Define the emotion labels for mapping
 emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
 label_to_id = {label: i for i, label in enumerate(emotion_labels)}
 id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
-# --- Ensemble Model Building Functions (Unchanged) ---
+# --- Ensemble Model Building Functions (Designed for High Accuracy) ---
 
 def build_cnn_bilstm_model():
     """Builds the Hybrid CNN-BiLSTM model."""
@@ -44,11 +47,11 @@ def build_cnn_bilstm_model():
     return model
 
 def build_bilstm_model_v2():
-    """Builds the pure BiLSTM model (version 2)."""
+    """Builds the pure BiLSTM model with two BiLSTM layers."""
     model = Sequential([
         Embedding(MAX_WORDS, EMBEDDING_DIM, input_length=MAX_LEN),
         Dropout(0.3),
-        Bidirectional(LSTM(LSTM_UNITS, return_sequences=True)),
+        Bidirectional(LSTM(LSTM_UNITS, return_sequences=True)), # Increased depth
         Bidirectional(LSTM(LSTM_UNITS // 2)),
         Dense(150, activation='relu'),
         Dropout(0.5),
@@ -71,7 +74,7 @@ def build_gru_model():
     return model
 
 
-# --- Caching function to load data and train the model once (Unchanged) ---
+# --- Caching function to load data and train the model once ---
 
 @st.cache_resource
 def load_and_train_model():
@@ -101,6 +104,19 @@ def load_and_train_model():
     # Convert labels to one-hot encoding
     train_labels_one_hot = tf.keras.utils.to_categorical(train_labels, num_classes=NUM_CLASSES)
     
+    # --- BIAS CORRECTION: Calculate Class Weights to mitigate Joy over-prediction ---
+    # This step assigns higher weights to minority classes (e.g., anger, fear) 
+    # forcing the model to pay more attention to them.
+    
+    classes = np.unique(train_labels)
+    weights = compute_class_weight(
+        class_weight='balanced', 
+        classes=classes, 
+        y=train_labels
+    )
+    class_weights_dict = dict(zip(classes, weights))
+    # --- END BIAS CORRECTION ---
+    
     # 3. Build and Train Ensemble Models
     
     models = [
@@ -117,7 +133,8 @@ def load_and_train_model():
             epochs=EPOCHS, 
             batch_size=32,
             validation_split=0.1,
-            verbose=0 # Run silently
+            verbose=0, # Run silently
+            class_weight=class_weights_dict # Apply the calculated weights
         )
     
     # 4. Ensemble Prediction and Evaluation
@@ -147,7 +164,7 @@ def load_and_train_model():
     return models, tokenizer, metrics
 
 
-# --- Prediction Function (Unchanged, but only returns label for new logic) ---
+# --- Prediction Function (Unchanged) ---
 def predict_emotion(ensemble_models, tokenizer, text):
     """Predicts the emotion of a given review text using the ensemble models (Soft Voting)."""
     sequence = tokenizer.texts_to_sequences([text])
@@ -163,10 +180,10 @@ def predict_emotion(ensemble_models, tokenizer, text):
     predicted_id = np.argmax(ensemble_prediction)
     predicted_label = id_to_label[predicted_id].capitalize()
     
-    return predicted_label # Only return the label for the batch analysis
+    return predicted_label 
 
 
-# --- Core Analysis Logic ---
+# --- Core Analysis Logic (Unchanged) ---
 def get_recommendation_and_comment(all_emotions):
     """
     Determines the overall recommended emotion and the buy/no-buy comment.
@@ -184,23 +201,16 @@ def get_recommendation_and_comment(all_emotions):
     top_emotions = [emotion for emotion, count in emotion_counts.items() if count == max_count]
 
     # 3. Determine the final dominant emotion
-    dominant_emotion = top_emotions[0] # Default to the first one found (alphabetical by default)
+    dominant_emotion = top_emotions[0] 
 
     if len(top_emotions) > 1:
         # Tie detected: Use the emotion from the last review (Review #10)
         last_review_emotion = all_emotions[-1]
+        
+        # Check if the last review's emotion is one of the tied dominant emotions
         if last_review_emotion in top_emotions:
             dominant_emotion = last_review_emotion
-        else:
-            # Should not happen often, but if the tie is between A and B, 
-            # but the last review is C, we stick to alphabetical or the initial choice.
-            # Sticking to the alphabetically first among the tie-set or the last review if it's one of the tied.
-            # We already chose the alphabetically first as default, let's keep it simple:
-            # If the last review emotion IS one of the highest, use it. Otherwise, rely on Counter's structure.
-            # Per prompt: "suggest emotion according to the latest review."
-            # The most straightforward implementation is: if there is a tie, the latest review's emotion wins *if* it is one of the tied emotions.
-            pass # Keep the default if the last review emotion wasn't part of the tie.
-
+        
     # 4. Generate Comment
     positive_emotions = ['Joy', 'Love', 'Surprise']
     
@@ -218,7 +228,7 @@ def get_recommendation_and_comment(all_emotions):
 
     return dominant_emotion, comment, emotion_counts
 
-# --- Main Streamlit App ---
+# --- Main Streamlit App (Unchanged) ---
 def main():
     
     # Initialize session state for analysis results
@@ -227,7 +237,7 @@ def main():
     if 'product_name' not in st.session_state:
         st.session_state.product_name = ""
 
-    # --- CSS Injection (Copied from original, slightly cleaned up for focus) ---
+    # --- CSS Injection (Unchanged) ---
     st.markdown(
         """
         <style>
@@ -307,7 +317,8 @@ def main():
         unsafe_allow_html=True
     )
 
-    st.markdown('<div class="header"><h1><span style="color: #FFD700;">🛍️</span> Product Sentiment Analyzer <span style="color: #FFD700;">📊</span></h1></div>', unsafe_allow_html=True)
+    # UPDATED APP NAME
+    st.markdown('<div class="header"><h1><span style="color: #FFD700;">🔬</span> Affectlytics <span style="color: #FFD700;">📊</span></h1></div>', unsafe_allow_html=True)
     
     # Load and train the model (cached)
     models, tokenizer, metrics = load_and_train_model()
@@ -395,6 +406,7 @@ def main():
         st.markdown("<hr style='border: 1px solid #7b1296;'>", unsafe_allow_html=True)
         st.markdown("<h3 style='color: white;'>Overall Emotion Counts:</h3>", unsafe_allow_html=True)
         
+        # Convert Counter to DataFrame for display
         count_data = pd.DataFrame(
             st.session_state.emotion_counts.items(), 
             columns=['Emotion', 'Count']
