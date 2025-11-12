@@ -3,11 +3,12 @@ import numpy as np
 import pandas as pd
 from datasets import load_dataset
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
-from sklearn.utils.class_weight import compute_class_weight # ADDED for bias correction
+from sklearn.utils.class_weight import compute_class_weight 
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Embedding, Bidirectional, LSTM, Dense, Dropout, Conv1D, GlobalMaxPooling1D, GRU
+from tensorflow.keras.callbacks import EarlyStopping # NEW: Added for robust training
 import os
 from collections import Counter 
 
@@ -21,8 +22,7 @@ MAX_LEN = 100     # Max length of a sequence (review)
 EMBEDDING_DIM = 100 # Dimension of the word embeddings
 LSTM_UNITS = 150  # MAXIMIZED CAPACITY
 NUM_CLASSES = 6
-# Max training epochs for highest accuracy potential. Pushing this value
-# attempts to maximize performance but can increase training time significantly.
+# NOTE: EPOCHS is kept high, but EarlyStopping will prevent true overfitting.
 EPOCHS = 30 
 NUM_REVIEWS = 10 # Constant for the required number of inputs
 
@@ -40,7 +40,7 @@ def build_cnn_bilstm_model():
         Conv1D(filters=128, kernel_size=5, activation='relu'), 
         GlobalMaxPooling1D(),
         Dense(150, activation='relu'),
-        Dropout(0.5),
+        Dropout(0.5), # High Dropout for strong regularization
         Dense(NUM_CLASSES, activation='softmax')
     ])
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
@@ -50,11 +50,11 @@ def build_bilstm_model_v2():
     """Builds the pure BiLSTM model with two BiLSTM layers."""
     model = Sequential([
         Embedding(MAX_WORDS, EMBEDDING_DIM, input_length=MAX_LEN),
-        Dropout(0.3),
-        Bidirectional(LSTM(LSTM_UNITS, return_sequences=True)), # Increased depth
+        Dropout(0.3), # Strong Dropout
+        Bidirectional(LSTM(LSTM_UNITS, return_sequences=True)), 
         Bidirectional(LSTM(LSTM_UNITS // 2)),
         Dense(150, activation='relu'),
-        Dropout(0.5),
+        Dropout(0.5), # High Dropout for strong regularization
         Dense(NUM_CLASSES, activation='softmax')
     ])
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
@@ -64,10 +64,10 @@ def build_gru_model():
     """Builds the Bidirectional GRU model."""
     model = Sequential([
         Embedding(MAX_WORDS, EMBEDDING_DIM, input_length=MAX_LEN),
-        Dropout(0.3),
+        Dropout(0.3), # Strong Dropout
         Bidirectional(GRU(LSTM_UNITS)),
         Dense(150, activation='relu'),
-        Dropout(0.5),
+        Dropout(0.5), # High Dropout for strong regularization
         Dense(NUM_CLASSES, activation='softmax')
     ])
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
@@ -104,10 +104,7 @@ def load_and_train_model():
     # Convert labels to one-hot encoding
     train_labels_one_hot = tf.keras.utils.to_categorical(train_labels, num_classes=NUM_CLASSES)
     
-    # --- BIAS CORRECTION: Calculate Class Weights to mitigate Joy over-prediction ---
-    # This step assigns higher weights to minority classes (e.g., anger, fear) 
-    # forcing the model to pay more attention to them.
-    
+    # --- BIAS CORRECTION: Calculate Class Weights (Essential for imbalance) ---
     classes = np.unique(train_labels)
     weights = compute_class_weight(
         class_weight='balanced', 
@@ -117,7 +114,16 @@ def load_and_train_model():
     class_weights_dict = dict(zip(classes, weights))
     # --- END BIAS CORRECTION ---
     
-    # 3. Build and Train Ensemble Models
+    # 3. Define Early Stopping Callback (Essential for preventing overfitting/bias)
+    early_stopping = EarlyStopping(
+        monitor='val_loss', 
+        patience=5, # Stop if validation loss doesn't improve for 5 epochs
+        restore_best_weights=True, # Load the best weights found
+        verbose=0
+    )
+    callbacks = [early_stopping]
+    
+    # 4. Build and Train Ensemble Models
     
     models = [
         build_cnn_bilstm_model(),
@@ -125,7 +131,7 @@ def load_and_train_model():
         build_gru_model()
     ]
 
-    # Train all models silently for maximum accuracy
+    # Train all models silently
     for model in models:
         model.fit(
             train_padded, 
@@ -134,10 +140,11 @@ def load_and_train_model():
             batch_size=32,
             validation_split=0.1,
             verbose=0, # Run silently
-            class_weight=class_weights_dict # Apply the calculated weights
+            class_weight=class_weights_dict, # Apply the calculated weights
+            callbacks=callbacks # Apply early stopping for robustness
         )
     
-    # 4. Ensemble Prediction and Evaluation
+    # 5. Ensemble Prediction and Evaluation
     
     # Get predictions (probabilities) from all models
     pred_probs_list = [model.predict(test_padded, verbose=0) for model in models]
@@ -228,7 +235,7 @@ def get_recommendation_and_comment(all_emotions):
 
     return dominant_emotion, comment, emotion_counts
 
-# --- Main Streamlit App (Unchanged) ---
+# --- Main Streamlit App ---
 def main():
     
     # Initialize session state for analysis results
@@ -456,3 +463,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
