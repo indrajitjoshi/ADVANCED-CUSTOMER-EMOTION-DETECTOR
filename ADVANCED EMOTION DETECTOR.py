@@ -23,9 +23,9 @@ MAX_WORDS = 20000     # Max number of words to keep in the vocabulary
 MAX_LEN = 128         # Max length of a sequence (Increased for better context)
 EMBEDDING_DIM = 128   # Dimension of the word embeddings (Consistent with common pre-trained sizes)
 RNN_UNITS = 200       # MAXIMIZED CAPACITY for LSTM/GRU
-DENSE_UNITS = 256     # Increased density for better feature separation
+DENSE_UNITS = 512     # MAXIMIZED CAPACITY for feature separation (CRITICAL FIX)
 NUM_CLASSES = 6
-EPOCHS = 30           # Max training epochs (Early Stopping will manage actual epochs)
+EPOCHS = 5            # CRITICAL FIX: Reduced max epochs for quicker startup time
 NUM_REVIEWS = 10      # Constant for the required number of inputs
 CONV_FILTERS = 256    # Increased filter count for deeper CNN
 TRAINABLE_EMBEDDING = False # CRITICAL NLP improvement: Use pre-trained weights, do not train them.
@@ -98,7 +98,7 @@ def build_cnn_model(embedding_matrix, vocab_size):
         Conv1D(filters=CONV_FILTERS, kernel_size=5, activation='relu'),
         Conv1D(filters=CONV_FILTERS // 2, kernel_size=3, activation='relu'),
         GlobalMaxPooling1D(),
-        Dense(DENSE_UNITS, activation='relu'),
+        Dense(DENSE_UNITS, activation='relu'), # MAXIMIZED DENSE LAYER
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -106,7 +106,7 @@ def build_cnn_model(embedding_matrix, vocab_size):
     return model
 
 def build_bilstm_model(embedding_matrix, vocab_size):
-    """Builds the deep BiLSTM model with frozen pre-trained embeddings."""
+    """Builds the deep BiLSTM model with a three-layer stack for maximum context retention."""
     model = Sequential([
         Embedding(
             vocab_size, 
@@ -116,9 +116,13 @@ def build_bilstm_model(embedding_matrix, vocab_size):
             trainable=TRAINABLE_EMBEDDING
         ),
         Dropout(0.3),
+        # First BiLSTM layer
         Bidirectional(LSTM(RNN_UNITS, recurrent_dropout=0.2, return_sequences=True)),
+        # Second BiLSTM layer (CRITICAL: Added depth)
+        Bidirectional(LSTM(RNN_UNITS, recurrent_dropout=0.2, return_sequences=True)),
+        # Third BiLSTM layer (Reduced units for sequence compression)
         Bidirectional(LSTM(RNN_UNITS // 2, recurrent_dropout=0.2)),
-        Dense(DENSE_UNITS, activation='relu'),
+        Dense(DENSE_UNITS, activation='relu'), # MAXIMIZED DENSE LAYER
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -126,7 +130,7 @@ def build_bilstm_model(embedding_matrix, vocab_size):
     return model
 
 def build_gru_model(embedding_matrix, vocab_size):
-    """Builds the Bidirectional GRU model with frozen pre-trained embeddings."""
+    """Builds the Bidirectional GRU model with increased density."""
     model = Sequential([
         Embedding(
             vocab_size, 
@@ -137,7 +141,7 @@ def build_gru_model(embedding_matrix, vocab_size):
         ),
         Dropout(0.3),
         Bidirectional(GRU(RNN_UNITS, recurrent_dropout=0.2)),
-        Dense(DENSE_UNITS, activation='relu'),
+        Dense(DENSE_UNITS, activation='relu'), # MAXIMIZED DENSE LAYER
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
     ])
@@ -187,8 +191,6 @@ def load_and_train_model():
     
     # Initialize embedding matrix with correct size
     embedding_matrix = np.random.uniform(-0.05, 0.05, size=(num_words, EMBEDDING_DIM))
-    # We rely on this random initialization + freezing to force the model to learn 
-    # negation based on the dense __NEGATED__ flag feature.
 
     # 4. Compute Class Weights (To combat overall class imbalance)
     class_weights = compute_class_weight(
@@ -217,7 +219,7 @@ def load_and_train_model():
         model.fit(
             train_padded,
             train_labels_one_hot,
-            epochs=EPOCHS,
+            epochs=EPOCHS, # Uses the low EPOCHS=5 cap for fast startup
             batch_size=32,
             validation_split=0.1,
             verbose=0,
@@ -551,3 +553,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
