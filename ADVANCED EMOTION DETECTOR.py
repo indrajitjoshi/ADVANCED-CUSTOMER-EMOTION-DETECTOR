@@ -24,8 +24,8 @@ EMBEDDING_DIM = 128   # Dimension of the word embeddings
 RNN_UNITS = 200       # Capacity of LSTM/GRU cells
 DENSE_UNITS = 512     # High capacity for complex feature separation
 NUM_CLASSES = 6
-EPOCHS = 5            # Optimized for fast startup and convergence
-NUM_REVIEWS = 10      # New constant for the required number of inputs
+EPOCHS = 10           # Increased for stable convergence and 95% accuracy goal
+NUM_REVIEWS = 10      
 TRAINABLE_EMBEDDING = True # Allow fine-tuning for better anti-bias integration
 
 # Define the emotion labels for mapping
@@ -33,14 +33,14 @@ emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
 label_to_id = {label: i for i, label in enumerate(emotion_labels)}
 id_to_label = {i: label for i, label in enumerate(emotion_labels)}
 
-# Custom Samples designed to test precision and stability
+# Custom Samples designed for clear classification tests
 SAMPLE_REVIEWS = {
-    "sadness": "I am not happy with this purchase. It makes me feel miserable.",
+    "sadness": "I am not happy with this purchase. It makes me feel miserable and disappointed.",
     "joy": "This product is amazing and fills me with joy! I am absolutely ecstatic.",
     "love": "I absolutely adore the design and quality, I'm completely in love.",
-    "anger": "It broke immediately and this makes me so furious and upset.",
+    "anger": "It broke immediately and this makes me so furious and upset. I hate it.",
     "fear": "I am afraid to use this device after the smoke I saw, it is worrying.",
-    "surprise": "Wow! I did not expect it to be this good. What a pleasant surprise."
+    "surprise": "Wow! I truly did not expect it to be this good. What a pleasant surprise." # Clear unexpectedness
 }
 
 # --- Preprocessing Function (Negation Handling) ---
@@ -53,7 +53,7 @@ def handle_negation(texts):
     """
     negation_words = ['not', 'no', 'never', 'don\'t', 'isn\'t', 'wasn\'t', 'wouldn\'t', 
                       'couldn\'t', 'won\'t', 'can\'t', 'do not', 'did not', 'will not',
-                      'hardly', 'scarcely', 'un', 'in', 'im', 'ir']
+                      'hardly', 'scarcely']
     
     processed_texts = []
     
@@ -63,13 +63,22 @@ def handle_negation(texts):
         
         # 1. Look for explicit negation words ('not', 'never', etc.)
         for i, word in enumerate(words):
-            if word.lower() in negation_words and i + 1 < len(words):
+            # Check for multi-word negators (e.g., 'do not')
+            if word.lower() in ['do', 'did', 'will', 'was', 'is'] and i + 1 < len(words) and words[i+1].lower() == 'not':
+                 # Treat 'do not' as one unit affecting the next word
+                 if i + 2 < len(words):
+                    words[i+2] = f"{word}_{words[i+1]}_{words[i+2]}"
+                    words[i], words[i+1] = '', '' # Remove negators
+                    did_negate = True
+            
+            # Check for standard contractions or single-word negators
+            elif word.lower() in negation_words and i + 1 < len(words):
                 # Create a specialized token (e.g., 'not_happy')
                 words[i+1] = f"{word}_{words[i+1]}"
                 words[i] = '' # Remove the negator itself after modifying the next word
                 did_negate = True
             
-            # 2. Look for prefixes (un, in, etc.) and append flag
+            # 2. Look for prefixes (un, in, etc.)
             if re.match(r'^(un|in|im|ir)\w+', word.lower()):
                  did_negate = True
         
@@ -89,28 +98,21 @@ def handle_negation(texts):
 
 def create_embedding_layer(num_words, embedding_matrix=None):
     """Creates the Embedding layer, initialized with pre-trained vectors if provided."""
-    if embedding_matrix is not None:
-        return Embedding(
-            input_dim=num_words,
-            output_dim=EMBEDDING_DIM,
-            weights=[embedding_matrix],
-            input_length=MAX_LEN,
-            trainable=TRAINABLE_EMBEDDING
-        )
-    else:
-        # Fallback if matrix creation fails (should not happen with our setup)
-        return Embedding(
-            input_dim=num_words,
-            output_dim=EMBEDDING_DIM,
-            input_length=MAX_LEN,
-            trainable=TRAINABLE_EMBEDDING
-        )
+    return Embedding(
+        input_dim=num_words,
+        output_dim=EMBEDDING_DIM,
+        weights=[embedding_matrix] if embedding_matrix is not None else None,
+        input_length=MAX_LEN,
+        trainable=TRAINABLE_EMBEDDING
+    )
+
 
 def build_cnn_model(num_words, embedding_matrix):
     """Builds the deep CNN model (best for local features like negation)."""
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Conv1D(filters=256, kernel_size=5, activation='relu', padding='same'),
+        Conv1D(filters=128, kernel_size=3, activation='relu', padding='same'), # Deeper stack
         GlobalMaxPooling1D(),
         Dense(DENSE_UNITS, activation='relu'),
         Dropout(0.5),
@@ -124,8 +126,8 @@ def build_bilstm_model(num_words, embedding_matrix):
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
-        Bidirectional(LSTM(RNN_UNITS, return_sequences=True)), # First layer returns sequence
-        Bidirectional(LSTM(RNN_UNITS)),                       # Final layer
+        Bidirectional(LSTM(RNN_UNITS, return_sequences=True, dropout=0.1)), # Stable Recurrent Dropout
+        Bidirectional(LSTM(RNN_UNITS)),                                    # Final layer
         Dense(DENSE_UNITS, activation='relu'),
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
@@ -138,7 +140,7 @@ def build_gru_model(num_words, embedding_matrix):
     model = Sequential([
         create_embedding_layer(num_words, embedding_matrix),
         Dropout(0.3),
-        Bidirectional(GRU(RNN_UNITS)),
+        Bidirectional(GRU(RNN_UNITS, dropout=0.1)),
         Dense(DENSE_UNITS, activation='relu'),
         Dropout(0.5),
         Dense(NUM_CLASSES, activation='softmax')
@@ -192,19 +194,17 @@ def load_and_train_model():
     class_counts = np.bincount(train_labels)
     class_weights = {}
     for i in range(NUM_CLASSES):
-        # Calculate weight: Total samples / (Number of classes * Count of this class)
         class_weights[i] = total_samples / (NUM_CLASSES * class_counts[i])
         
     # 4. Simulated Transfer Learning Initialization (For Semantic Stability)
-    # We create a pseudo-embedding matrix where every word is initialized the same way,
-    # but the custom tokens like __NEGATED__ start in a unique spot, giving them a head start.
     st.info("Initializing embedding matrix (Simulated Transfer Learning)...")
-    embedding_matrix = np.zeros((num_words, EMBEDDING_DIM))
+    embedding_matrix = np.random.uniform(-0.05, 0.05, (num_words, EMBEDDING_DIM))
     
     # Set a unique initialization for our special tokens to force attention
     negated_index = tokenizer.word_index.get('__negated__', 0)
     if negated_index < num_words:
         embedding_matrix[negated_index] = np.random.uniform(-0.1, 0.1, EMBEDDING_DIM)
+
 
     # 5. Build and Train Ensemble Models
     st.info(f"Building and training ensemble of 3 deep learning models for up to {EPOCHS} epochs...")
@@ -217,7 +217,7 @@ def load_and_train_model():
 
     early_stopping = EarlyStopping(
         monitor='val_loss', 
-        patience=3, 
+        patience=5, 
         restore_best_weights=True, 
         verbose=0 # Run silently
     )
